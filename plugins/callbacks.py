@@ -2,7 +2,7 @@ from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
 from database.db import db
-from info import PICS_URL, ADMIN_ID, FREE_USER_DAILY_VERIFICATIONS
+from info import PICS_URL, ADMIN_ID, FREE_USER_CHANNEL_LIMIT, FREE_PROPERTY_DURATION_HOURS
 from plugins.profile import build_profile_text
 from plugins.start import main_menu_markup
 from script import script
@@ -128,9 +128,8 @@ async def subscribe_premium_cb(client: Client, query: CallbackQuery):
         "📅 **1 Year** - $35 (Save 42%)\n\n"
         "✨ **Premium Benefits:**\n"
         "• Unlimited listing additions\n"
-        "• No daily verification limit\n"
+        "• Listings never expire\n"
         "• Priority admin approval (within 1 hour)\n"
-        "• Listings never expire (30 days validity)\n"
         "• Featured listing option\n"
         "• Priority support\n\n"
         "To subscribe, contact admin:\n"
@@ -166,129 +165,5 @@ async def top_listings_cb(client: Client, query: CallbackQuery):
             [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
         ]),
         disable_web_page_preview=True
-    )
-    await query.answer()
-
-
-@Client.on_callback_query(filters.regex(r"^browse_categories$"))
-async def browse_categories_cb(client: Client, query: CallbackQuery):
-    categories = await db.all_categories()
-    if not categories:
-        await query.answer("No categories yet.", show_alert=True)
-        return
-    
-    buttons = []
-    for c in categories:
-        buttons.append([
-            InlineKeyboardButton(f"{c['icon']} {c['category_name']}", callback_data=f"cat_{c['category_name']}_1")
-        ])
-    buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="main_menu")])
-    
-    await query.message.edit_text(
-        "📂 **Browse Categories**\n\nSelect a category to view listings:",
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
-    await query.answer()
-
-
-@Client.on_callback_query(filters.regex(r"^cat_"))
-async def browse_category_listing_cb(client: Client, query: CallbackQuery):
-    _, category, page = query.data.split("_", 2)
-    page = int(page)
-    
-    channels = await db.approved_channels_by_category(category)
-    if not channels:
-        await query.answer("No approved listings in this category yet.", show_alert=True)
-        return
-    
-    page_items, total_pages, page = paginate(channels, page, 10)
-    
-    text = f"📂 **{category}** — Page {page}/{total_pages}\n\n"
-    buttons = []
-    
-    for c in page_items:
-        badge = "⭐" if c.get('is_premium', False) else "✅"
-        expires = ""
-        if not c.get('is_premium', False) and c.get('expires_at'):
-            if isinstance(c['expires_at'], str):
-                expires_at = datetime.fromisoformat(c['expires_at'])
-            else:
-                expires_at = c['expires_at']
-            if datetime.now() > expires_at:
-                continue  # Skip expired listings
-        text += f"{badge} <b>{c['channel_name']}</b>\n"
-        text += f"📝 {c.get('description', 'No description')[:50]}...\n"
-        text += f"📊 {c.get('joins', 0)} joins\n\n"
-        buttons.append([
-            InlineKeyboardButton(f"🔗 Join {c['channel_name']}", callback_data=f"join_{c['channel_id']}")
-        ])
-    
-    if not buttons:
-        await query.answer("No active listings in this category.", show_alert=True)
-        return
-    
-    nav = []
-    if page > 1:
-        nav.append(InlineKeyboardButton("⬅️", callback_data=f"cat_{category}_{page - 1}"))
-    if page < total_pages:
-        nav.append(InlineKeyboardButton("➡️", callback_data=f"cat_{category}_{page + 1}"))
-    if nav:
-        buttons.append(nav)
-    
-    buttons.append([InlineKeyboardButton("⬅️ Categories", callback_data="browse_categories")])
-    
-    await query.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(buttons),
-        disable_web_page_preview=True
-    )
-    await query.answer()
-
-
-@Client.on_callback_query(filters.regex(r"^join_"))
-async def join_channel_cb(client: Client, query: CallbackQuery):
-    channel_id_raw = query.data.split("_", 1)[1]
-    try:
-        channel_id = int(channel_id_raw)
-    except ValueError:
-        channel_id = channel_id_raw
-    
-    channel = await db.get_channel(channel_id)
-    if not channel:
-        await query.answer("Listing not found.", show_alert=True)
-        return
-    
-    # Check if channel is approved and not expired
-    if not channel.get('approved', False):
-        await query.answer("⏳ This listing is pending admin approval.", show_alert=True)
-        return
-    
-    # Check expiration
-    expires_at = channel.get('expires_at')
-    if expires_at:
-        if isinstance(expires_at, str):
-            expires_at = datetime.fromisoformat(expires_at)
-        if datetime.now() > expires_at:
-            await query.answer("⏰ This listing has expired.", show_alert=True)
-            return
-    
-    # Check if user can join (verification for free users)
-    is_premium = await db.is_premium(query.from_user.id)
-    if not is_premium and not channel.get('is_premium', False):
-        # Free user joining free listing - need verification
-        has_verification = await db.has_verification_today(query.from_user.id)
-        if not has_verification:
-            await query.answer(
-                "🔐 Verification required! Use /verify to complete verification.",
-                show_alert=True
-            )
-            return
-    
-    await db.increment_join(channel_id)
-    await query.message.reply_text(
-        f"✅ **Here's your link:**\n\n"
-        f"📢 {channel['channel_name']}\n"
-        f"🔗 {channel['channel_link']}\n\n"
-        f"📊 {channel.get('joins', 0) + 1} total joins"
     )
     await query.answer()
