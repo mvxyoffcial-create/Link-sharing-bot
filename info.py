@@ -1,20 +1,20 @@
 import os
 
 # ---------------- Core Telegram / Bot Config ----------------
-API_ID =  36282056
+API_ID = 36282056
 API_HASH = "3a948acece533f362b4c90b2b3c14b60"
 BOT_TOKEN = "8530838101:AAFD9MQdmsqST4LConoHCvl4vBXCRLVuipo"
 
 # ---------------- Database ----------------
-MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
-DB_NAME = os.environ.get("DB_NAME", "SpideyShareBot")
+MONGO_URI = "mongodb+srv://cloudnestoffcail_db_user:Venura8907@cluster0.hjqkg75.mongodb.net/?appName=Cluster0"
+DB_NAME = "SpideyShareBot"
 
 # ---------------- Owner / Admins ----------------
-OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
-ADMINS = [OWNER_ID] + [int(x) for x in os.environ.get("ADMINS", "").split() if x.isdigit()]
+OWNER_ID = "8498741978"
+ADMINS = [8498741978]
 
 # ---------------- Branding ----------------
-BOT_NAME = os.environ.get("BOT_NAME", "SpideyShareBot")
+BOT_NAME = "SpideyShareBot"
 DEVELOPER = "@Spidey2189"
 SUPPORT_CHANNELS = ["@spideyoffcail", "@mvxyoffcail"]
 
