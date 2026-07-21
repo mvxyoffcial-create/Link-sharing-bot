@@ -11,7 +11,7 @@ DB_NAME = "SpideyShareBot"
 
 # ---------------- Owner / Admins ----------------
 OWNER_ID = "8498741978"
-ADMIN_ID = 8498741978  # For compatibility with new features
+ADMIN_ID = 8498741978
 ADMINS = [8498741978]
 
 # ---------------- Branding ----------------
@@ -27,13 +27,13 @@ STICKER_ID = "CAACAgIAAxkBAAEQZtFpgEdROhGouBVFD3e0K-YjmVHwsgACtCMAAphLKUjeub7NKl
 PICS_URL = ["https://api.aniwallpaper.workers.dev/random?type=girl"]
 
 # ---------------- Limits ----------------
-FREE_USER_CHANNEL_LIMIT = 3  # Max listings for free users
-FREE_USER_DAILY_VERIFICATIONS = 2  # Max verifications per day for free users
-FREE_PROPERTY_DURATION_HOURS = 24  # Auto-removal after 24 hours for free listings
+FREE_USER_CHANNEL_LIMIT = 1  # Only 1 listing for free users
+FREE_USER_DAILY_VERIFICATIONS = 999  # No limit needed since we remove verification
+FREE_PROPERTY_DURATION_HOURS = 5  # Listings stay for 5 hours only
 PAGE_SIZE = 5
 
-# ---------------- Verification API ----------------
-VERIFICATION_API = "https://userlinks.in/st?api=920693e8f5b3e7289bd203327543123631080f07&url="
+# ---------------- No Verification API Needed ----------------
+# REMOVED: VERIFICATION_API
 
 # ---------------- Premium Settings ----------------
 PREMIUM_PROPERTY_DURATION_DAYS = 30  # Premium listings last 30 days
@@ -43,6 +43,3 @@ DEFAULT_CATEGORIES = [
     "Movies", "Web Series", "Anime", "Music", "Educational",
     "Gaming", "News", "Technology", "Premium Channels", "Bots",
 ]
-
-# ---------------- Bot Messages (Optional overrides) ----------------
-# These are defined in script.py, but you can override them here if needed
