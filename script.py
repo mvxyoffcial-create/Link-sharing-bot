@@ -104,38 +104,39 @@ class script:
         "Please try again or contact support."
     )
 
+    # Template strings with placeholders
     LISTING_SUBMITTED_TXT = (
         "🎉 <b>Listing Submitted!</b>\n\n"
-        f"📢 Name: {name}\n"
-        f"📂 Category: {category}\n"
-        f"🔗 Link: {link}\n"
-        f"✅ Status: {status}\n"
-        f"⭐ Type: {user_type}\n\n"
-        f"{status_note}\n\n"
+        "📢 Name: {name}\n"
+        "📂 Category: {category}\n"
+        "🔗 Link: {link}\n"
+        "✅ Status: {status}\n"
+        "⭐ Type: {user_type}\n\n"
+        "{status_note}\n\n"
         "⏳ Wait for admin approval. You'll be notified when approved!"
     )
 
     LISTING_APPROVED_TXT = (
         "✅ <b>Your Listing Has Been Approved!</b>\n\n"
-        f"📢 Name: {name}\n"
-        f"📂 Category: {category}\n"
-        f"🔗 Link: {link}\n"
-        f"⭐ Type: {user_type}\n\n"
+        "📢 Name: {name}\n"
+        "📂 Category: {category}\n"
+        "🔗 Link: {link}\n"
+        "⭐ Type: {user_type}\n\n"
         "Your listing is now public and visible to all users! 🎉"
     )
 
     LISTING_REJECTED_TXT = (
         "❌ <b>Your Listing Was Rejected</b>\n\n"
-        f"📢 Name: {name}\n"
-        f"📂 Category: {category}\n\n"
+        "📢 Name: {name}\n"
+        "📂 Category: {category}\n\n"
         "Please contact admin for more information.\n\n"
         f"Admin: @{DEVELOPER.lstrip('@')}"
     )
 
     LISTING_EXPIRED_TXT = (
         "⏰ <b>Your Listing Has Expired</b>\n\n"
-        f"📢 Name: {name}\n"
-        f"📂 Category: {category}\n\n"
+        "📢 Name: {name}\n"
+        "📂 Category: {category}\n\n"
         "This free listing has been automatically removed after 24 hours.\n\n"
         "💡 Upgrade to premium to keep your listing active forever!\n\n"
         f"Contact @{DEVELOPER.lstrip('@')} to upgrade."
@@ -143,28 +144,28 @@ class script:
 
     PROFILE_TXT = (
         "👤 <b>Your Profile</b>\n\n"
-        f"🆔 User ID: <code>{user_id}</code>\n"
-        f"👤 Name: {name}\n"
-        f"📊 Type: {user_type}\n"
-        f"✅ Verifications Today: {verifications}/{max_verifications}\n"
-        f"📢 Listings: {listings}\n"
-        f"💰 Total Verifications: {total_verifications}\n"
-        f"📅 Joined: {joined_date}\n\n"
-        f"{premium_status}"
+        "🆔 User ID: <code>{user_id}</code>\n"
+        "👤 Name: {name}\n"
+        "📊 Type: {user_type}\n"
+        "✅ Verifications Today: {verifications}/{max_verifications}\n"
+        "📢 Listings: {listings}\n"
+        "💰 Total Verifications: {total_verifications}\n"
+        "📅 Joined: {joined_date}\n\n"
+        "{premium_status}"
     )
 
     ADMIN_APPROVAL_TXT = (
         "🔔 <b>New Listing - Awaiting Approval</b>\n\n"
-        f"👤 Owner: [{owner_name}](tg://user?id={owner_id})\n"
-        f"🆔 User ID: <code>{owner_id}</code>\n"
-        f"📢 Name: {name}\n"
-        f"🔗 Link: {link}\n"
-        f"📂 Category: {category}\n"
-        f"📝 Description: {description}\n"
-        f"✅ Status: {status}\n"
-        f"⭐ Type: {user_type}\n"
-        f"⏳ Expires: {expires}\n"
-        f"📊 Joins: {joins}\n\n"
+        "👤 Owner: [{owner_name}](tg://user?id={owner_id})\n"
+        "🆔 User ID: <code>{owner_id}</code>\n"
+        "📢 Name: {name}\n"
+        "🔗 Link: {link}\n"
+        "📂 Category: {category}\n"
+        "📝 Description: {description}\n"
+        "✅ Status: {status}\n"
+        "⭐ Type: {user_type}\n"
+        "⏳ Expires: {expires}\n"
+        "📊 Joins: {joins}\n\n"
         "Approve or reject this listing:"
     )
 
@@ -173,9 +174,9 @@ class script:
         "📝 {description}\n"
         "🔗 <a href='{link}'>Join Now</a>\n"
         "📂 Category: {category}\n"
-        f"⭐ {user_type}\n"
-        f"👤 Owner: {owner}\n"
-        f"📊 Joins: {joins}"
+        "⭐ {user_type}\n"
+        "👤 Owner: {owner}\n"
+        "📊 Joins: {joins}"
     )
 
     SEARCH_RESULTS_TXT = (
