@@ -39,13 +39,11 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self.end_headers()
     
     def log_message(self, format, *args):
-        # Suppress health check logs
         if '/health' not in format:
             logging.info(f"Health check: {format % args}")
 
 
 def run_health_server():
-    """Run a simple HTTP server for health checks on port 8000"""
     try:
         server = HTTPServer(('0.0.0.0', 8000), HealthCheckHandler)
         logging.info("🩺 Health check server running on port 8000")
@@ -59,7 +57,6 @@ def auto_cleanup_expired_properties():
     """Background thread to remove expired free listings"""
     while True:
         try:
-            # Delete expired free properties
             deleted_count = asyncio.run_coroutine_threadsafe(
                 db.delete_expired_properties(FREE_PROPERTY_DURATION_HOURS),
                 app.loop
@@ -68,7 +65,6 @@ def auto_cleanup_expired_properties():
             if deleted_count > 0:
                 logging.info(f"🗑️ Auto-removed {deleted_count} expired free listings")
                 
-                # Notify admin about auto-removal
                 asyncio.run_coroutine_threadsafe(
                     app.send_message(
                         ADMIN_ID,
@@ -80,13 +76,13 @@ def auto_cleanup_expired_properties():
                     app.loop
                 ).result()
             
-            # Also check for premium expirations and notify users
+            # Check premium expirations
             asyncio.run_coroutine_threadsafe(
                 check_premium_expirations(),
                 app.loop
             ).result()
             
-            time.sleep(3600)  # Check every hour
+            time.sleep(3600)
             
         except Exception as e:
             logging.error(f"Auto-cleanup error: {e}")
@@ -94,9 +90,7 @@ def auto_cleanup_expired_properties():
 
 
 async def check_premium_expirations():
-    """Check for users whose premium is about to expire"""
     try:
-        # Get users whose premium expires in less than 3 days
         three_days_later = datetime.utcnow() + timedelta(days=3)
         cursor = db.users.find({
             "premium_until": {"$gt": datetime.utcnow(), "$lt": three_days_later}
@@ -121,13 +115,11 @@ async def check_premium_expirations():
 
 
 async def boot():
-    """Initialize bot on startup"""
     await db.ensure_default_categories()
     
     me = await app.get_me()
     logging.info(f"{me.first_name} (@{me.username}) is up and running — dev @Spidey2189")
     
-    # Send startup notification to admin
     try:
         await app.send_message(
             ADMIN_ID,
@@ -136,8 +128,7 @@ async def boot():
             f"📌 Username: @{me.username}\n"
             f"📌 ID: {me.id}\n\n"
             f"⚙️ **Features Active:**\n"
-            f"✅ Verification system\n"
-            f"✅ Premium subscriptions\n"
+            f"✅ Free users: 1 listing only\n"
             f"✅ Auto-removal ({FREE_PROPERTY_DURATION_HOURS} hours)\n"
             f"✅ Admin approval system\n"
             f"✅ Auto-cleanup thread running\n\n"
@@ -148,12 +139,10 @@ async def boot():
 
 
 if __name__ == "__main__":
-    # Start the health check server in a separate thread
     health_thread = threading.Thread(target=run_health_server, daemon=True)
     health_thread.start()
     logging.info("🩺 Health check server thread started")
     
-    # Start the auto-cleanup thread
     cleanup_thread = threading.Thread(target=auto_cleanup_expired_properties, daemon=True)
     cleanup_thread.start()
     logging.info("🔄 Auto-cleanup thread started")
@@ -161,7 +150,7 @@ if __name__ == "__main__":
     async def main():
         await app.start()
         await boot()
-        await asyncio.Event().wait()  # run forever
+        await asyncio.Event().wait()
 
     try:
         asyncio.get_event_loop().run_until_complete(main())
