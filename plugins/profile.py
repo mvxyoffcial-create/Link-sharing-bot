@@ -3,23 +3,18 @@ from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 from database.db import db
-from info import FREE_USER_DAILY_VERIFICATIONS, ADMIN_ID
+from info import FREE_USER_CHANNEL_LIMIT, ADMIN_ID, FREE_PROPERTY_DURATION_HOURS
 
 
 async def build_profile_text(client: Client, user) -> str:
-    """Build profile text for a user with all new features"""
     data = await db.get_user(user.id)
     channel_count = await db.user_channel_count(user.id)
 
     is_premium = await db.is_premium(user.id)
     premium_until = data.get("premium_until") if data else None
     
-    # Get verification info
-    verifications_today = await db.get_today_verifications(user.id)
-    max_verifications = await db.get_max_verifications(user.id)
-    total_verifications = data.get('total_verifications', 0) if data else 0
+    max_listings = "Unlimited" if is_premium else FREE_USER_CHANNEL_LIMIT
     
-    # Premium status with days left
     premium_str = "Not Premium ❌"
     if is_premium and premium_until:
         if isinstance(premium_until, datetime.datetime):
@@ -30,13 +25,11 @@ async def build_profile_text(client: Client, user) -> str:
     elif is_premium:
         premium_str = "Active ✅"
 
-    # Get listings status
     listings = await db.channels_by_owner(user.id)
     approved_listings = sum(1 for l in listings if l.get('approved', False))
     pending_listings = sum(1 for l in listings if not l.get('approved', False))
     expired_listings = 0
     
-    # Check expired listings
     for l in listings:
         if l.get('approved', False) and not l.get('is_premium', False):
             expires_at = l.get('expires_at')
@@ -59,35 +52,28 @@ async def build_profile_text(client: Client, user) -> str:
     return (
         "👤 <b>Your Profile</b>\n\n"
         f"➲ First Name: {user.first_name or ''}\n"
-        f"➲ Last Name: {user.last_name or 'None'}\n"
         f"➲ Telegram ID: <code>{user.id}</code>\n"
-        f"➲ Data Centre: {dc_id}\n"
         f"➲ Username: @{user.username or 'None'}\n"
         f"➲ Joined Date: {joined_date}\n"
         "─────────────\n"
         "📊 <b>Stats:</b>\n"
-        f"➲ Listings Added: {channel_count}\n"
+        f"➲ Listings Added: {channel_count}/{max_listings}\n"
         f"➲ Approved: {approved_listings}\n"
         f"➲ Pending: {pending_listings}\n"
         f"➲ Expired: {expired_listings}\n"
         "─────────────\n"
-        "🔐 <b>Verification:</b>\n"
-        f"➲ Today: {verifications_today}/{max_verifications}\n"
-        f"➲ Total: {total_verifications}\n"
-        "─────────────\n"
         "💎 <b>Premium:</b>\n"
         f"➲ Status: {premium_str}\n"
-        f"➲ Free limit: {FREE_USER_DAILY_VERIFICATIONS} verifications/day\n"
-        f"➲ Premium: Unlimited\n"
+        f"➲ Free limit: {FREE_USER_CHANNEL_LIMIT} listing\n"
+        f"➲ Free expiry: {FREE_PROPERTY_DURATION_HOURS} hours\n"
+        f"➲ Premium: Unlimited, no expiry\n"
     )
 
 
 @Client.on_message(filters.command("profile") & filters.private)
 async def profile_cmd(client: Client, message: Message):
-    """Profile command handler"""
     text = await build_profile_text(client, message.from_user)
     
-    # Try to send with profile photo if available
     try:
         photos = await client.get_chat_photos(message.from_user.id, limit=1)
         photo = None
@@ -108,7 +94,6 @@ async def profile_cmd(client: Client, message: Message):
     except Exception:
         pass
     
-    # Fallback to text
     await message.reply_text(
         text,
         reply_markup=InlineKeyboardMarkup([
@@ -121,5 +106,4 @@ async def profile_cmd(client: Client, message: Message):
 
 @Client.on_message(filters.command("info") & filters.private)
 async def info_cmd(client: Client, message: Message):
-    """Info command (legacy) - redirects to profile"""
     await profile_cmd(client, message)
