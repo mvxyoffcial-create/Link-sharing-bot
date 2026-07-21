@@ -4,7 +4,7 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 
 from database.db import db
-from info import STICKER_ID, PICS_URL, DEVELOPER, SUPPORT_CHANNELS, ADMIN_ID, FREE_USER_DAILY_VERIFICATIONS
+from info import STICKER_ID, PICS_URL, DEVELOPER, SUPPORT_CHANNELS, ADMIN_ID, FREE_USER_CHANNEL_LIMIT, FREE_PROPERTY_DURATION_HOURS
 from script import script
 from utils import get_welcome_image
 
@@ -41,7 +41,6 @@ async def start(client: Client, message: Message):
             reply_markup=main_menu_markup(),
         )
     except Exception:
-        # Fall back to text-only welcome if the image endpoint is unreachable
         await message.reply_text(
             script.WELCOME_TXT.format(first_name=user.first_name or "there"),
             reply_markup=main_menu_markup(),
@@ -82,25 +81,24 @@ async def profile_cmd(client: Client, message: Message):
         return
     
     is_premium = await db.is_premium(user_id)
-    verifications = await db.get_today_verifications(user_id)
-    max_verifications = await db.get_max_verifications(user_id)
     listings = await db.user_channel_count(user_id)
-    total_verifications = user.get('total_verifications', 0)
     
     user_type = "⭐ Premium" if is_premium else "📊 Free"
-    premium_status = ""
+    max_listings = "Unlimited" if is_premium else FREE_USER_CHANNEL_LIMIT
     
+    premium_status = ""
     if is_premium:
         premium_until = user.get('premium_until')
         if premium_until:
-            days_left = (premium_until - datetime.now().utcnow()).days
-            premium_status = f"✅ Premium active ({days_left} days left)"
-        else:
-            premium_status = "✅ Premium active"
+            if isinstance(premium_until, datetime):
+                days_left = (premium_until - datetime.utcnow()).days
+                premium_status = f"✅ Premium active ({days_left} days left)"
+            else:
+                premium_status = "✅ Premium active"
     else:
-        premium_status = f"🔒 Free user - {FREE_USER_DAILY_VERIFICATIONS} verifications/day"
+        premium_status = f"🔒 Free user - {FREE_USER_CHANNEL_LIMIT} listing only, expires in {FREE_PROPERTY_DURATION_HOURS} hours"
     
-    joined_date = user.get('joined_date', datetime.now().utcnow())
+    joined_date = user.get('joined_date', datetime.utcnow())
     if isinstance(joined_date, datetime):
         joined_date = joined_date.strftime("%Y-%m-%d")
     
@@ -109,10 +107,8 @@ async def profile_cmd(client: Client, message: Message):
             user_id=user_id,
             name=message.from_user.first_name or "User",
             user_type=user_type,
-            verifications=verifications,
-            max_verifications=max_verifications,
             listings=listings,
-            total_verifications=total_verifications,
+            max_listings=max_listings,
             joined_date=joined_date,
             premium_status=premium_status
         ),
@@ -137,47 +133,6 @@ async def premium_cmd(client: Client, message: Message):
     )
 
 
-@Client.on_message(filters.command("verify") & filters.private)
-async def verify_cmd(client: Client, message: Message):
-    user_id = message.from_user.id
-    is_premium = await db.is_premium(user_id)
-    
-    if is_premium:
-        await message.reply_text(
-            "⭐ **Premium User**\n\n"
-            "You don't need to verify! You have unlimited access to add listings.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ Add Listing", callback_data="add_listing")],
-                [InlineKeyboardButton("📋 Main Menu", callback_data="main_menu")]
-            ])
-        )
-        return
-    
-    today_verifications = await db.get_today_verifications(user_id)
-    
-    if today_verifications >= FREE_USER_DAILY_VERIFICATIONS:
-        await message.reply_text(
-            f"⚠️ **Daily Verification Limit Reached**\n\n"
-            f"📊 Free users: {FREE_USER_DAILY_VERIFICATIONS} verifications/day\n"
-            f"✅ Used today: {today_verifications}/{FREE_USER_DAILY_VERIFICATIONS}\n\n"
-            "💡 Upgrade to premium for unlimited verifications!",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💎 Get Premium", callback_data="premium_info")],
-                [InlineKeyboardButton("📋 Main Menu", callback_data="main_menu")]
-            ])
-        )
-        return
-    
-    await message.reply_text(
-        script.VERIFICATION_TXT.format(FREE_USER_DAILY_VERIFICATIONS=FREE_USER_DAILY_VERIFICATIONS),
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Start Verification", callback_data="start_verification")],
-            [InlineKeyboardButton("💎 Get Premium", callback_data="premium_info")],
-            [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
-        ])
-    )
-
-
 @Client.on_message(filters.command("search") & filters.private)
 async def search_cmd(client: Client, message: Message):
     await message.reply_text(
@@ -192,44 +147,3 @@ async def search_cmd(client: Client, message: Message):
             [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
         ])
     )
-
-
-@Client.on_message(filters.private & filters.text & ~filters.command(["start", "help", "about", "profile", "premium", "verify", "search", "cancel"]))
-async def search_handler(client: Client, message: Message):
-    # This handles search queries from the search command
-    if message.text:
-        keyword = message.text.strip()
-        results = await db.search_approved_channels(keyword, limit=20)
-        
-        if not results:
-            await message.reply_text(
-                script.NO_RESULTS_TXT.format(keyword=keyword),
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔍 Browse Categories", callback_data="browse_categories")],
-                    [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
-                ])
-            )
-            return
-        
-        result_text = ""
-        for i, c in enumerate(results[:10], 1):
-            badge = "⭐" if c.get('is_premium', False) else "✅"
-            result_text += f"{i}. {badge} <b>{c['channel_name']}</b>\n"
-            result_text += f"   🔗 <a href='{c['channel_link']}'>Join</a>\n"
-            result_text += f"   📂 {c.get('category', 'N/A')}\n\n"
-        
-        if len(results) > 10:
-            result_text += f"\n... and {len(results) - 10} more results."
-        
-        await message.reply_text(
-            script.SEARCH_RESULTS_TXT.format(
-                count=len(results),
-                keyword=keyword,
-                results=result_text
-            ),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📂 Browse Categories", callback_data="browse_categories")],
-                [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
-            ]),
-            disable_web_page_preview=True
-        )
