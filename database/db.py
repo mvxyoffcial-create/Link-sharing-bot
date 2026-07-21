@@ -2,7 +2,7 @@ import datetime
 import motor.motor_asyncio
 from bson import ObjectId
 
-from info import MONGO_URI, DB_NAME, DEFAULT_CATEGORIES, FREE_USER_DAILY_VERIFICATIONS
+from info import MONGO_URI, DB_NAME, DEFAULT_CATEGORIES, FREE_USER_CHANNEL_LIMIT
 
 
 class Database:
@@ -13,7 +13,6 @@ class Database:
         self.users = self.db.users
         self.channels = self.db.channels
         self.categories = self.db.categories
-        self.verifications = self.db.verifications
         self.settings = self.db.settings
 
     # ---------------------------------------------------------------- USERS
@@ -27,22 +26,7 @@ class Database:
             "username": username,
             "premium_until": None,
             "joined_date": datetime.datetime.utcnow(),
-            "total_verifications": 0,
         })
-
-    async def register_user(self, user_id: int, username: str = "", first_name: str = ""):
-        """Register or update user"""
-        if await self.users.find_one({"user_id": user_id}):
-            await self.users.update_one(
-                {"user_id": user_id},
-                {"$set": {
-                    "username": username,
-                    "first_name": first_name,
-                    "last_seen": datetime.datetime.utcnow()
-                }}
-            )
-            return
-        await self.add_user(user_id, first_name, "", username)
 
     async def get_user(self, user_id: int):
         return await self.users.find_one({"user_id": user_id})
@@ -77,64 +61,9 @@ class Database:
             {"premium_until": {"$gt": datetime.datetime.utcnow()}}
         )
 
-    # ------------------------------------------------------------ VERIFICATIONS
-    async def add_verification(self, user_id: int):
-        """Add a verification record for today"""
-        today = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        await self.verifications.insert_one({
-            "user_id": user_id,
-            "date": today,
-            "timestamp": datetime.datetime.utcnow()
-        })
-        await self.users.update_one(
-            {"user_id": user_id},
-            {"$inc": {"total_verifications": 1}}
-        )
-
-    async def get_today_verifications(self, user_id: int) -> int:
-        """Get number of verifications today for a user"""
-        today = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        tomorrow = today + datetime.timedelta(days=1)
-        count = await self.verifications.count_documents({
-            "user_id": user_id,
-            "date": {"$gte": today, "$lt": tomorrow}
-        })
-        return count
-
-    async def has_verification_today(self, user_id: int) -> bool:
-        """Check if user has verified today"""
-        count = await self.get_today_verifications(user_id)
-        return count > 0
-
-    async def use_verification(self, user_id: int):
-        """Use one verification (for free users)"""
-        # This is called when a free user submits a listing
-        # It doesn't create a new verification, just checks if they have one
-        pass
-
-    async def get_max_verifications(self, user_id: int) -> int:
-        """Get max verifications for user"""
-        if await self.is_premium(user_id):
-            return 999999  # Unlimited for premium
-        return FREE_USER_DAILY_VERIFICATIONS
-
-    async def can_add_listing(self, user_id: int):
-        """Check if user can add a listing"""
-        is_premium = await self.is_premium(user_id)
-        
-        if is_premium:
-            return True, "Premium user - unlimited"
-        
-        # Check daily verification limit
-        today_verifications = await self.get_today_verifications(user_id)
-        if today_verifications < 1:
-            return False, "Please complete verification first"
-        
-        return True, "OK"
-
     # ------------------------------------------------------------- CHANNELS
     async def add_channel(self, channel_id, channel_name, channel_link, owner_id,
-                           category, description="", verification_status="pending",
+                           category, description="", verification_status="verified",
                            is_premium=False, expires_at=None, approved=False):
         """Add a new channel/group/bot listing"""
         await self.channels.insert_one({
@@ -162,12 +91,6 @@ class Database:
     async def delete_channel(self, channel_id) -> bool:
         res = await self.channels.delete_one({"channel_id": channel_id})
         return res.deleted_count > 0
-
-    async def verify_channel(self, channel_id) -> bool:
-        res = await self.channels.update_one(
-            {"channel_id": channel_id}, {"$set": {"verification_status": "verified"}}
-        )
-        return res.modified_count > 0
 
     async def approve_channel(self, channel_id) -> bool:
         """Approve a channel listing"""
@@ -250,17 +173,7 @@ class Database:
         }).sort("joins", -1).limit(limit)
         return [c async for c in cursor]
 
-    async def get_expired_properties(self, hours=24):
-        """Get expired free properties"""
-        expiry_time = datetime.datetime.utcnow() - datetime.timedelta(hours=hours)
-        cursor = self.channels.find({
-            "is_premium": False,
-            "approved": True,
-            "added_date": {"$lt": expiry_time}
-        })
-        return [c async for c in cursor]
-
-    async def delete_expired_properties(self, hours=24):
+    async def delete_expired_properties(self, hours=5):
         """Delete expired free properties"""
         expiry_time = datetime.datetime.utcnow() - datetime.timedelta(hours=hours)
         res = await self.channels.delete_many({
