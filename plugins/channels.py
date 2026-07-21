@@ -8,7 +8,7 @@ from pyrogram.types import (
 )
 
 from database.db import db
-from info import FREE_USER_CHANNEL_LIMIT, LOG_CHANNEL, PAGE_SIZE, ADMIN_ID, VERIFICATION_API, FREE_USER_DAILY_VERIFICATIONS
+from info import FREE_USER_CHANNEL_LIMIT, LOG_CHANNEL, PAGE_SIZE, ADMIN_ID, FREE_PROPERTY_DURATION_HOURS
 from script import script
 from utils import temp, paginate
 from datetime import datetime, timedelta
@@ -31,15 +31,10 @@ async def can_user_add_listing(user_id):
     if is_premium:
         return True, "Premium user - unlimited"
     
-    # Check daily verification limit
-    today_verifications = await db.get_today_verifications(user_id)
-    if today_verifications < 1:
-        return False, "Please complete verification first"
-    
     # Check total listings limit
     count = await db.user_channel_count(user_id)
     if count >= FREE_USER_CHANNEL_LIMIT:
-        return False, f"Free users can add up to {FREE_USER_CHANNEL_LIMIT} listings. Upgrade to premium for unlimited!"
+        return False, f"Free users can add only {FREE_USER_CHANNEL_LIMIT} listing. Upgrade to premium for unlimited!"
     
     return True, "OK"
 
@@ -57,33 +52,6 @@ async def add_listing_start(client: Client, query: CallbackQuery):
             f"⚠️ {reason}\n\n💡 Get premium for unlimited additions!",
             show_alert=True,
         )
-        return
-    
-    # Check if user needs verification (non-premium users)
-    if not is_premium:
-        today_verifications = await db.get_today_verifications(user_id)
-        if today_verifications >= FREE_USER_DAILY_VERIFICATIONS:
-            await query.answer(
-                f"⚠️ Daily verification limit reached ({FREE_USER_DAILY_VERIFICATIONS}/day).\n"
-                "💡 Upgrade to premium for unlimited verifications!",
-                show_alert=True,
-            )
-            return
-        
-        # Ask for verification first
-        await query.message.edit_text(
-            "🔐 **Verification Required**\n\n"
-            "Before adding a listing, you need to verify.\n"
-            f"📊 Free users: {FREE_USER_DAILY_VERIFICATIONS} verifications/day\n"
-            "⭐ Premium users: Unlimited\n\n"
-            "Click the button below to verify:",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Start Verification", callback_data="start_verification")],
-                [InlineKeyboardButton("💎 Get Premium", callback_data="premium_info")],
-                [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
-            ])
-        )
-        await query.answer()
         return
     
     # Premium user - no verification needed
@@ -161,49 +129,29 @@ async def finalize_submission(client: Client, message: Message, user_id: int):
     link = data["link"]
     username = link.split("/")[-1].lstrip("@")
 
-    # Check verification status based on user type
     is_premium = await db.is_premium(user_id)
     
-    if is_premium:
-        verification_status = "verified"
-        owner_verified = True
-    else:
-        # Check if user has completed verification today
-        has_verification = await db.has_verification_today(user_id)
-        if has_verification:
-            verification_status = "verified"
-            owner_verified = True
-            # Use one verification
-            await db.add_verification(user_id)  # This will increment the count
-        else:
-            # Check ownership
-            try:
-                chat = await client.get_chat(f"@{username}")
-                member = await client.get_chat_member(chat.id, user_id)
-                if member.status.name.lower() in ("owner", "creator", "administrator"):
-                    verification_status = "verified"
-                    owner_verified = True
-                else:
-                    verification_status = "pending"
-                    owner_verified = False
-            except RPCError:
-                verification_status = "pending"
-                owner_verified = False
-            except Exception:
-                verification_status = "pending"
-                owner_verified = False
+    # Check if free user already has a listing
+    if not is_premium:
+        count = await db.user_channel_count(user_id)
+        if count >= FREE_USER_CHANNEL_LIMIT:
+            await message.reply_text(
+                f"⚠️ You already have {count} listing(s). Free users can only have {FREE_USER_CHANNEL_LIMIT} listing.\n"
+                "💡 Upgrade to premium for unlimited listings!"
+            )
+            return
 
-    resolved_chat_id = link  # fallback identifier
+    resolved_chat_id = link
     try:
         chat = await client.get_chat(f"@{username}")
         resolved_chat_id = chat.id
     except:
         pass
 
-    # Set expiration for free users
+    # Set expiration for free users (5 hours)
     expires_at = None
     if not is_premium:
-        expires_at = datetime.utcnow() + timedelta(hours=24)
+        expires_at = datetime.utcnow() + timedelta(hours=FREE_PROPERTY_DURATION_HOURS)
 
     await db.add_channel(
         channel_id=resolved_chat_id,
@@ -212,7 +160,7 @@ async def finalize_submission(client: Client, message: Message, user_id: int):
         owner_id=user_id,
         category=data["category"],
         description=data.get("description", ""),
-        verification_status=verification_status,
+        verification_status="verified",
         is_premium=is_premium,
         expires_at=expires_at,
         approved=False,  # Needs admin approval
@@ -227,7 +175,6 @@ async def finalize_submission(client: Client, message: Message, user_id: int):
         f"🔗 Link: {link}\n"
         f"📂 Category: {data['category']}\n"
         f"📝 Description: {data.get('description', 'N/A')}\n"
-        f"✅ Status: {verification_status}\n"
         f"⭐ Type: {'Premium' if is_premium else 'Free'}\n"
         f"⏳ Expires: {expires_at.strftime('%Y-%m-%d %H:%M') if expires_at else 'Never'}\n\n"
         f"Approve or reject this listing:"
@@ -243,21 +190,16 @@ async def finalize_submission(client: Client, message: Message, user_id: int):
         disable_web_page_preview=True
     )
 
-    status_note = (
-        "✅ Verified and submitted for admin approval. You'll be notified when approved!"
-        if verification_status == "verified"
-        else "⏳ Pending verification — admin will review it."
-    )
+    status_note = "✅ Submitted for admin approval. You'll be notified when approved!"
 
     if not is_premium:
-        status_note += f"\n\n⏰ Free listing will expire after 24 hours if not approved."
+        status_note += f"\n\n⏰ Free listing will expire after {FREE_PROPERTY_DURATION_HOURS} hours if not approved."
 
     await message.reply_text(
         script.LISTING_SUBMITTED_TXT.format(
             name=data['name'],
             category=data['category'],
             link=link,
-            status=verification_status,
             user_type='Premium' if is_premium else 'Free',
             status_note=status_note
         )
@@ -269,82 +211,11 @@ async def finalize_submission(client: Client, message: Message, user_id: int):
                 LOG_CHANNEL,
                 f"#New_Listing\n\n👤 Owner: <code>{user_id}</code>\n"
                 f"📢 Name: {data['name']}\n🔗 Link: {link}\n📂 Category: {data['category']}\n"
-                f"Status: {verification_status}\nType: {'Premium' if is_premium else 'Free'}"
+                f"Type: {'Premium' if is_premium else 'Free'}"
                 f"{'⏳ Expires: ' + expires_at.strftime('%Y-%m-%d %H:%M') if expires_at else ''}"
             )
         except Exception:
             pass
-
-
-# ------------------------------------------------------------------ VERIFICATION
-@Client.on_callback_query(filters.regex(r"^start_verification$"))
-async def start_verification(client: Client, query: CallbackQuery):
-    user_id = query.from_user.id
-    is_premium = await db.is_premium(user_id)
-    
-    if is_premium:
-        await query.answer("⭐ Premium users don't need verification!", show_alert=True)
-        return
-    
-    # Check daily limit
-    today_verifications = await db.get_today_verifications(user_id)
-    if today_verifications >= FREE_USER_DAILY_VERIFICATIONS:
-        await query.answer(
-            f"⚠️ Daily limit reached ({FREE_USER_DAILY_VERIFICATIONS}/day).\n"
-            "💡 Upgrade to premium for unlimited!",
-            show_alert=True
-        )
-        return
-    
-    # Generate verification link
-    verification_link = f"{VERIFICATION_API}verification_{user_id}_{int(datetime.utcnow().timestamp())}"
-    
-    await query.message.edit_text(
-        "🔐 **Complete Verification**\n\n"
-        "Click the button below to complete verification:\n\n"
-        f"📊 You have {FREE_USER_DAILY_VERIFICATIONS - today_verifications} verification(s) left today.\n"
-        f"⏳ Verification is valid for 24 hours.\n\n"
-        "⚠️ **Note:** You need to verify before adding any listing.",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Verify Now", url=verification_link)],
-            [InlineKeyboardButton("🔄 I Completed Verification", callback_data="check_verification")],
-            [InlineKeyboardButton("💎 Get Premium", callback_data="premium_info")],
-            [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
-        ])
-    )
-    await query.answer()
-
-
-@Client.on_callback_query(filters.regex(r"^check_verification$"))
-async def check_verification(client: Client, query: CallbackQuery):
-    user_id = query.from_user.id
-    
-    # Check if user has completed verification
-    if await db.has_verification_today(user_id):
-        await query.answer("✅ Verification confirmed!", show_alert=True)
-        await query.message.edit_text(
-            "✅ **Verification Successful!**\n\n"
-            "You can now add your listing.\n"
-            "Click the button below to continue.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ Add Listing", callback_data="add_listing")],
-                [InlineKeyboardButton("📋 Main Menu", callback_data="main_menu")]
-            ])
-        )
-    else:
-        # For demo, we'll simulate verification
-        await db.add_verification(user_id)
-        remaining = FREE_USER_DAILY_VERIFICATIONS - await db.get_today_verifications(user_id)
-        await query.answer("✅ Verification completed successfully!", show_alert=True)
-        await query.message.edit_text(
-            f"✅ **Verification Successful!**\n\n"
-            "You can now add your listing.\n"
-            f"📊 Remaining verifications today: {remaining}/{FREE_USER_DAILY_VERIFICATIONS}",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ Add Listing", callback_data="add_listing")],
-                [InlineKeyboardButton("📋 Main Menu", callback_data="main_menu")]
-            ])
-        )
 
 
 # ------------------------------------------------------------------ APPROVAL
@@ -415,7 +286,7 @@ async def reject_listing(client: Client, query: CallbackQuery):
     await query.answer("Rejected!")
 
 
-# ------------------------------------------------------------------ BROWSE (Updated to show only approved)
+# ------------------------------------------------------------------ BROWSE
 @Client.on_callback_query(filters.regex(r"^browse_categories$"))
 async def browse_categories(client: Client, query: CallbackQuery):
     categories = await db.all_categories()
@@ -435,7 +306,7 @@ async def browse_categories(client: Client, query: CallbackQuery):
 async def browse_category_listing(client: Client, query: CallbackQuery):
     _, category, page = query.data.split("_", 2)
     page = int(page)
-    channels = await db.approved_channels_by_category(category)  # Only show approved
+    channels = await db.approved_channels_by_category(category)
     if not channels:
         await query.answer("No approved listings in this category yet.", show_alert=True)
         return
@@ -503,10 +374,10 @@ async def search_prompt(client: Client, query: CallbackQuery):
     await query.answer()
 
 
-@Client.on_message(filters.private & filters.text & filters.regex(r"(?i)^(movies?|anime|series|music|gaming|news|technology|bots?|educational)( channels?)?$"))
+@Client.on_message(filters.private & filters.text & ~filters.command(["start", "help", "about", "profile", "premium", "search", "cancel"]))
 async def autofilter_keyword(client: Client, message: Message):
     keyword = message.text.strip()
-    results = await db.search_approved_channels(keyword, limit=10)  # Only search approved
+    results = await db.search_approved_channels(keyword, limit=10)
     if not results:
         await message.reply_text(script.NO_RESULTS_TXT.format(keyword=keyword))
         return
