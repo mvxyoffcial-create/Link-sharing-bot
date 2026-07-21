@@ -96,14 +96,12 @@ class script:
     VERIFICATION_SUCCESS_TXT = (
         "✅ <b>Verification Successful!</b>\n\n"
         "You can now add your listing.\n\n"
-        f"📊 Remaining verifications today: {remaining}/{FREE_USER_DAILY_VERIFICATIONS}\n\n"
         "Click the button below to continue adding your listing."
     )
 
     VERIFICATION_FAILED_TXT = (
         "❌ <b>Verification Failed!</b>\n\n"
-        "Please try again or contact support.\n\n"
-        f"📊 Remaining verifications today: {remaining}/{FREE_USER_DAILY_VERIFICATIONS}"
+        "Please try again or contact support."
     )
 
     LISTING_SUBMITTED_TXT = (
