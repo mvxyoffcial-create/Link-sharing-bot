@@ -11,8 +11,6 @@ from database.db import db
 from info import FREE_USER_CHANNEL_LIMIT, LOG_CHANNEL, PAGE_SIZE, ADMIN_ID, VERIFICATION_API, FREE_USER_DAILY_VERIFICATIONS
 from script import script
 from utils import temp, paginate
-import requests
-import json
 from datetime import datetime, timedelta
 
 STEP_NAME, STEP_LINK, STEP_CATEGORY, STEP_DESC = "name", "link", "category", "description"
@@ -35,8 +33,8 @@ async def can_user_add_listing(user_id):
     
     # Check daily verification limit
     today_verifications = await db.get_today_verifications(user_id)
-    if today_verifications >= FREE_USER_DAILY_VERIFICATIONS:
-        return False, f"Daily verification limit reached ({FREE_USER_DAILY_VERIFICATIONS}/day). Upgrade to premium for unlimited!"
+    if today_verifications < 1:
+        return False, "Please complete verification first"
     
     # Check total listings limit
     count = await db.user_channel_count(user_id)
@@ -167,7 +165,7 @@ async def finalize_submission(client: Client, message: Message, user_id: int):
     is_premium = await db.is_premium(user_id)
     
     if is_premium:
-        verification_status = "verified"  # Premium users auto-verified
+        verification_status = "verified"
         owner_verified = True
     else:
         # Check if user has completed verification today
@@ -176,7 +174,7 @@ async def finalize_submission(client: Client, message: Message, user_id: int):
             verification_status = "verified"
             owner_verified = True
             # Use one verification
-            await db.use_verification(user_id)
+            await db.add_verification(user_id)  # This will increment the count
         else:
             # Check ownership
             try:
@@ -205,7 +203,7 @@ async def finalize_submission(client: Client, message: Message, user_id: int):
     # Set expiration for free users
     expires_at = None
     if not is_premium:
-        expires_at = datetime.now() + timedelta(hours=24)
+        expires_at = datetime.utcnow() + timedelta(hours=24)
 
     await db.add_channel(
         channel_id=resolved_chat_id,
@@ -255,10 +253,14 @@ async def finalize_submission(client: Client, message: Message, user_id: int):
         status_note += f"\n\n⏰ Free listing will expire after 24 hours if not approved."
 
     await message.reply_text(
-        "🎉 <b>Submitted!</b>\n\n"
-        f"📢 Name: {data['name']}\n"
-        f"📂 Category: {data['category']}\n\n"
-        f"{status_note}"
+        script.LISTING_SUBMITTED_TXT.format(
+            name=data['name'],
+            category=data['category'],
+            link=link,
+            status=verification_status,
+            user_type='Premium' if is_premium else 'Free',
+            status_note=status_note
+        )
     )
 
     if LOG_CHANNEL:
@@ -295,7 +297,7 @@ async def start_verification(client: Client, query: CallbackQuery):
         return
     
     # Generate verification link
-    verification_link = f"{VERIFICATION_API}verification_{user_id}_{int(datetime.now().timestamp())}"
+    verification_link = f"{VERIFICATION_API}verification_{user_id}_{int(datetime.utcnow().timestamp())}"
     
     await query.message.edit_text(
         "🔐 **Complete Verification**\n\n"
@@ -331,13 +333,13 @@ async def check_verification(client: Client, query: CallbackQuery):
         )
     else:
         # For demo, we'll simulate verification
-        # In production, you'd check with the verification API
         await db.add_verification(user_id)
+        remaining = FREE_USER_DAILY_VERIFICATIONS - await db.get_today_verifications(user_id)
         await query.answer("✅ Verification completed successfully!", show_alert=True)
         await query.message.edit_text(
-            "✅ **Verification Successful!**\n\n"
+            f"✅ **Verification Successful!**\n\n"
             "You can now add your listing.\n"
-            f"📊 Remaining verifications today: {FREE_USER_DAILY_VERIFICATIONS - 1}",
+            f"📊 Remaining verifications today: {remaining}/{FREE_USER_DAILY_VERIFICATIONS}",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("➕ Add Listing", callback_data="add_listing")],
                 [InlineKeyboardButton("📋 Main Menu", callback_data="main_menu")]
@@ -363,11 +365,12 @@ async def approve_listing(client: Client, query: CallbackQuery):
             try:
                 await client.send_message(
                     owner_id,
-                    f"✅ **Your Listing Has Been Approved!**\n\n"
-                    f"📢 Name: {channel.get('channel_name')}\n"
-                    f"📂 Category: {channel.get('category')}\n"
-                    f"🔗 Link: {channel.get('channel_link')}\n\n"
-                    f"Your listing is now public! 🎉"
+                    script.LISTING_APPROVED_TXT.format(
+                        name=channel.get('channel_name', 'N/A'),
+                        category=channel.get('category', 'N/A'),
+                        link=channel.get('channel_link', 'N/A'),
+                        user_type='Premium' if channel.get('is_premium', False) else 'Free'
+                    )
                 )
             except:
                 pass
@@ -397,10 +400,10 @@ async def reject_listing(client: Client, query: CallbackQuery):
             try:
                 await client.send_message(
                     owner_id,
-                    f"❌ **Your Listing Was Rejected**\n\n"
-                    f"📢 Name: {channel.get('channel_name')}\n"
-                    f"📂 Category: {channel.get('category')}\n\n"
-                    f"Please contact admin for more information."
+                    script.LISTING_REJECTED_TXT.format(
+                        name=channel.get('channel_name', 'N/A'),
+                        category=channel.get('category', 'N/A')
+                    )
                 )
             except:
                 pass
@@ -481,7 +484,7 @@ async def join_channel(client: Client, query: CallbackQuery):
     if expires_at:
         if isinstance(expires_at, str):
             expires_at = datetime.fromisoformat(expires_at)
-        if datetime.now() > expires_at:
+        if datetime.utcnow() > expires_at:
             await query.answer("⏰ This listing has expired.", show_alert=True)
             return
 
@@ -505,7 +508,7 @@ async def autofilter_keyword(client: Client, message: Message):
     keyword = message.text.strip()
     results = await db.search_approved_channels(keyword, limit=10)  # Only search approved
     if not results:
-        await message.reply_text(f"🔍 No listings found for '{keyword}'.")
+        await message.reply_text(script.NO_RESULTS_TXT.format(keyword=keyword))
         return
     lines = [f"🔍 Found {len(results)} listing(s) for '{keyword}':\n"]
     for i, c in enumerate(results, 1):
