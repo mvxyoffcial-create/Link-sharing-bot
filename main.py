@@ -3,6 +3,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timedelta
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from pyrogram import Client
 
@@ -23,6 +24,34 @@ app = Client(
     plugins=dict(root="plugins"),
     workers=200,
 )
+
+
+# Health check server for Koyeb
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        # Suppress health check logs
+        if '/health' not in format:
+            logging.info(f"Health check: {format % args}")
+
+
+def run_health_server():
+    """Run a simple HTTP server for health checks on port 8000"""
+    try:
+        server = HTTPServer(('0.0.0.0', 8000), HealthCheckHandler)
+        logging.info("🩺 Health check server running on port 8000")
+        server.serve_forever()
+    except Exception as e:
+        logging.error(f"Health check server error: {e}")
 
 
 # Auto-cleanup function for expired free properties
@@ -94,7 +123,6 @@ async def check_premium_expirations():
 async def boot():
     """Initialize bot on startup"""
     await db.ensure_default_categories()
-    await db.ensure_default_settings()
     
     me = await app.get_me()
     logging.info(f"{me.first_name} (@{me.username}) is up and running — dev @Spidey2189")
@@ -120,6 +148,11 @@ async def boot():
 
 
 if __name__ == "__main__":
+    # Start the health check server in a separate thread
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
+    logging.info("🩺 Health check server thread started")
+    
     # Start the auto-cleanup thread
     cleanup_thread = threading.Thread(target=auto_cleanup_expired_properties, daemon=True)
     cleanup_thread.start()
