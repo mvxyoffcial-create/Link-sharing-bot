@@ -1,7 +1,8 @@
 import datetime
 import motor.motor_asyncio
+from bson import ObjectId
 
-from info import MONGO_URI, DB_NAME, DEFAULT_CATEGORIES
+from info import MONGO_URI, DB_NAME, DEFAULT_CATEGORIES, FREE_USER_DAILY_VERIFICATIONS
 
 
 class Database:
@@ -12,6 +13,8 @@ class Database:
         self.users = self.db.users
         self.channels = self.db.channels
         self.categories = self.db.categories
+        self.verifications = self.db.verifications
+        self.settings = self.db.settings
 
     # ---------------------------------------------------------------- USERS
     async def add_user(self, user_id: int, first_name: str = "", last_name: str = "", username: str = ""):
@@ -24,7 +27,22 @@ class Database:
             "username": username,
             "premium_until": None,
             "joined_date": datetime.datetime.utcnow(),
+            "total_verifications": 0,
         })
+
+    async def register_user(self, user_id: int, username: str = "", first_name: str = ""):
+        """Register or update user"""
+        if await self.users.find_one({"user_id": user_id}):
+            await self.users.update_one(
+                {"user_id": user_id},
+                {"$set": {
+                    "username": username,
+                    "first_name": first_name,
+                    "last_seen": datetime.datetime.utcnow()
+                }}
+            )
+            return
+        await self.add_user(user_id, first_name, "", username)
 
     async def get_user(self, user_id: int):
         return await self.users.find_one({"user_id": user_id})
@@ -59,9 +77,66 @@ class Database:
             {"premium_until": {"$gt": datetime.datetime.utcnow()}}
         )
 
+    # ------------------------------------------------------------ VERIFICATIONS
+    async def add_verification(self, user_id: int):
+        """Add a verification record for today"""
+        today = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        await self.verifications.insert_one({
+            "user_id": user_id,
+            "date": today,
+            "timestamp": datetime.datetime.utcnow()
+        })
+        await self.users.update_one(
+            {"user_id": user_id},
+            {"$inc": {"total_verifications": 1}}
+        )
+
+    async def get_today_verifications(self, user_id: int) -> int:
+        """Get number of verifications today for a user"""
+        today = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        tomorrow = today + datetime.timedelta(days=1)
+        count = await self.verifications.count_documents({
+            "user_id": user_id,
+            "date": {"$gte": today, "$lt": tomorrow}
+        })
+        return count
+
+    async def has_verification_today(self, user_id: int) -> bool:
+        """Check if user has verified today"""
+        count = await self.get_today_verifications(user_id)
+        return count > 0
+
+    async def use_verification(self, user_id: int):
+        """Use one verification (for free users)"""
+        # This is called when a free user submits a listing
+        # It doesn't create a new verification, just checks if they have one
+        pass
+
+    async def get_max_verifications(self, user_id: int) -> int:
+        """Get max verifications for user"""
+        if await self.is_premium(user_id):
+            return 999999  # Unlimited for premium
+        return FREE_USER_DAILY_VERIFICATIONS
+
+    async def can_add_listing(self, user_id: int):
+        """Check if user can add a listing"""
+        is_premium = await self.is_premium(user_id)
+        
+        if is_premium:
+            return True, "Premium user - unlimited"
+        
+        # Check daily verification limit
+        today_verifications = await self.get_today_verifications(user_id)
+        if today_verifications < 1:
+            return False, "Please complete verification first"
+        
+        return True, "OK"
+
     # ------------------------------------------------------------- CHANNELS
     async def add_channel(self, channel_id, channel_name, channel_link, owner_id,
-                           category, description="", verification_status="pending"):
+                           category, description="", verification_status="pending",
+                           is_premium=False, expires_at=None, approved=False):
+        """Add a new channel/group/bot listing"""
         await self.channels.insert_one({
             "channel_id": channel_id,
             "channel_name": channel_name,
@@ -72,6 +147,9 @@ class Database:
             "is_active": True,
             "added_date": datetime.datetime.utcnow(),
             "verification_status": verification_status,
+            "is_premium": is_premium,
+            "expires_at": expires_at,
+            "approved": approved,
             "joins": 0,
         })
 
@@ -79,7 +157,6 @@ class Database:
         return await self.channels.find_one({"channel_id": channel_id})
 
     async def get_channel_by_oid(self, oid):
-        from bson import ObjectId
         return await self.channels.find_one({"_id": ObjectId(oid)})
 
     async def delete_channel(self, channel_id) -> bool:
@@ -91,6 +168,35 @@ class Database:
             {"channel_id": channel_id}, {"$set": {"verification_status": "verified"}}
         )
         return res.modified_count > 0
+
+    async def approve_channel(self, channel_id) -> bool:
+        """Approve a channel listing"""
+        res = await self.channels.update_one(
+            {"channel_id": channel_id},
+            {"$set": {"approved": True, "verification_status": "verified"}}
+        )
+        return res.modified_count > 0
+
+    async def reject_channel(self, channel_id) -> bool:
+        """Reject a channel listing"""
+        res = await self.channels.update_one(
+            {"channel_id": channel_id},
+            {"$set": {"approved": False, "is_active": False}}
+        )
+        return res.modified_count > 0
+
+    async def approved_channels_by_category(self, category):
+        """Get only approved channels in a category"""
+        query = {
+            "category": category,
+            "is_active": True,
+            "approved": True,
+            "$or": [
+                {"expires_at": None},
+                {"expires_at": {"$gt": datetime.datetime.utcnow()}}
+            ]
+        }
+        return [c async for c in self.channels.find(query).sort("added_date", -1)]
 
     async def channels_by_category(self, category, active_only=True):
         query = {"category": category}
@@ -114,12 +220,55 @@ class Database:
         ).limit(limit)
         return [c async for c in cursor]
 
+    async def search_approved_channels(self, keyword: str, limit: int = 10):
+        """Search only approved channels"""
+        regex = {"$regex": keyword, "$options": "i"}
+        cursor = self.channels.find({
+            "$and": [
+                {"approved": True},
+                {"is_active": True},
+                {"$or": [{"channel_name": regex}, {"description": regex}, {"category": regex}]},
+                {"$or": [
+                    {"expires_at": None},
+                    {"expires_at": {"$gt": datetime.datetime.utcnow()}}
+                ]}
+            ]
+        }).limit(limit)
+        return [c async for c in cursor]
+
     async def increment_join(self, channel_id):
         await self.channels.update_one({"channel_id": channel_id}, {"$inc": {"joins": 1}})
 
     async def top_channels(self, limit: int = 10):
-        cursor = self.channels.find({"is_active": True}).sort("joins", -1).limit(limit)
+        cursor = self.channels.find({
+            "is_active": True,
+            "approved": True,
+            "$or": [
+                {"expires_at": None},
+                {"expires_at": {"$gt": datetime.datetime.utcnow()}}
+            ]
+        }).sort("joins", -1).limit(limit)
         return [c async for c in cursor]
+
+    async def get_expired_properties(self, hours=24):
+        """Get expired free properties"""
+        expiry_time = datetime.datetime.utcnow() - datetime.timedelta(hours=hours)
+        cursor = self.channels.find({
+            "is_premium": False,
+            "approved": True,
+            "added_date": {"$lt": expiry_time}
+        })
+        return [c async for c in cursor]
+
+    async def delete_expired_properties(self, hours=24):
+        """Delete expired free properties"""
+        expiry_time = datetime.datetime.utcnow() - datetime.timedelta(hours=hours)
+        res = await self.channels.delete_many({
+            "is_premium": False,
+            "approved": True,
+            "added_date": {"$lt": expiry_time}
+        })
+        return res.deleted_count
 
     # ------------------------------------------------------------ CATEGORIES
     async def ensure_default_categories(self):
@@ -139,6 +288,18 @@ class Database:
 
     async def all_categories(self):
         return [c async for c in self.categories.find({"is_active": True})]
+
+    # ------------------------------------------------------------ SETTINGS
+    async def get_setting(self, key: str):
+        setting = await self.settings.find_one({"key": key})
+        return setting.get("value") if setting else None
+
+    async def set_setting(self, key: str, value):
+        await self.settings.update_one(
+            {"key": key},
+            {"$set": {"value": value}},
+            upsert=True
+        )
 
 
 db = Database(MONGO_URI, DB_NAME)
